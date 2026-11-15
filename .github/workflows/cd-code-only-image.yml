@@ -23,8 +23,6 @@ env:
   ECR_REPOSITORY: iris-api
   CLUSTER: iris-mlops
   SERVICE: iris-code-only-image
-  BUCKET: ${{ vars.MODEL_BUCKET }}
-  MODEL_URI: s3://${{ vars.MODEL_BUCKET }}/iris/latest/model.joblib
   SHA: ${{ github.event.workflow_run.head_sha }} # the commit CI tested
 
 jobs:
@@ -44,6 +42,11 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Find the model bucket # named after the account ID, see infra/template.yaml
+        run: |
+          BUCKET=iris-mlops-models-$(aws sts get-caller-identity --query Account --output text)
+          echo "BUCKET=$BUCKET" >> "$GITHUB_ENV"
+          echo "MODEL_URI=s3://$BUCKET/iris/latest/model.joblib" >> "$GITHUB_ENV"
       - id: diff
         name: Did model or API code change since the last upload / image?
         run: |
@@ -78,6 +81,11 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Find the model bucket # named after the account ID, see infra/template.yaml
+        run: |
+          BUCKET=iris-mlops-models-$(aws sts get-caller-identity --query Account --output text)
+          echo "BUCKET=$BUCKET" >> "$GITHUB_ENV"
+          echo "MODEL_URI=s3://$BUCKET/iris/latest/model.joblib" >> "$GITHUB_ENV"
       - name: Upload model to S3
         # git-sha metadata records which commit the model in latest/ came from.
         run: |
@@ -97,6 +105,11 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Find the model bucket # named after the account ID, see infra/template.yaml
+        run: |
+          BUCKET=iris-mlops-models-$(aws sts get-caller-identity --query Account --output text)
+          echo "BUCKET=$BUCKET" >> "$GITHUB_ENV"
+          echo "MODEL_URI=s3://$BUCKET/iris/latest/model.joblib" >> "$GITHUB_ENV"
       - id: ecr
         uses: aws-actions/amazon-ecr-login@v2
       - name: Build code-only Docker image

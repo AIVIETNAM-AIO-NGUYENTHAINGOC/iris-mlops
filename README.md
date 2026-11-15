@@ -142,14 +142,14 @@ If your account already has a GitHub OIDC provider, add `CreateOidcProvider=fals
 
 ### 3. Configure GitHub
 
-In the repository, go to **Settings → Secrets and variables → Actions → Variables** and add two variables from the stack outputs:
+The workflows sign in to AWS with OIDC, so GitHub stores no AWS secrets. They only need to know which role to assume. Save the CI role ARN as a repository variable:
 
-| Variable | Stack output |
-|---|---|
-| `AWS_ROLE_ARN` | `CiRoleArn` |
-| `MODEL_BUCKET` | `BucketName` |
+```bash
+gh variable set AWS_ROLE_ARN --repo <owner>/<repo> --body "$(aws cloudformation describe-stacks \
+  --stack-name iris-mlops --query "Stacks[0].Outputs[?OutputKey=='CiRoleArn'].OutputValue" --output text)"
+```
 
-No secrets are needed: the workflows get short-lived AWS credentials through OIDC.
+Nothing else is needed: the workflows derive the bucket name from the account ID.
 
 ### 4. Push to `main`
 
@@ -230,7 +230,7 @@ aws cloudformation describe-stack-events --stack-name iris-mlops \
 
 Outside AWS:
 
-1. Delete the GitHub variables (`gh variable delete AWS_ROLE_ARN` and `gh variable delete MODEL_BUCKET`). Without the stack, CD fails on the next push to `main`, so also disable the CD workflows (`gh workflow disable "CD: model in image"` and `gh workflow disable "CD: code-only image + model in S3"`) or delete the repository.
+1. Delete the GitHub variable (`gh variable delete AWS_ROLE_ARN`). Without the stack, CD fails on the next push to `main`, so also disable the CD workflows (`gh workflow disable "CD: model in image"` and `gh workflow disable "CD: code-only image + model in S3"`) or delete the repository.
 2. Remove the local containers, images and pip cache: `docker compose down --rmi local --volumes`.
 
 The stack deletes the GitHub OIDC provider it created. If other projects in the account started using that provider, they lose access too.

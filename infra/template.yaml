@@ -345,7 +345,7 @@ Resources:
 
 Outputs:
   BucketName:
-    Description: Put this in GitHub repo Settings > Secrets and variables > Actions > Variables as MODEL_BUCKET
+    Description: Model bucket. The workflows derive this name from the account ID.
     Value: !Ref ModelBucket
   ImageRepositoryUri:
     Value: !GetAtt ImageRepository.RepositoryUri
