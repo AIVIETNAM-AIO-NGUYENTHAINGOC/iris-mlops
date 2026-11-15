@@ -1,0 +1,14 @@
+# Credentials
+.aws/
+.env
+.env.*
+
+# Training outputs (stored in S3 and ECR)
+artifacts/
+data/
+
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/

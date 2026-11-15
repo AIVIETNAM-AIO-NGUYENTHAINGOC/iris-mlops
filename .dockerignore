@@ -1,0 +1,19 @@
+# Keep credentials and raw data out of the build context.
+.aws/
+.env
+.env.*
+data/
+
+# Only Dockerfile.model-in-image needs model.joblib.
+artifacts/
+!artifacts/model.joblib
+
+.git
+.github
+infra/
+tests/
+.venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.ruff_cache/

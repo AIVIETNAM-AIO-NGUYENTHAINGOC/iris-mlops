@@ -1,0 +1,359 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Iris MLOps - S3 bucket for models, ECR repository for images, ECS Fargate (one service per approach), IAM for CI (GitHub OIDC) and serving.
+
+# Deploy and teardown: see README.md.
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository as owner/name. Only its main branch may assume the CI role.
+  CreateOidcProvider:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: Set to false if the account already has the token.actions.githubusercontent.com OIDC provider.
+  NoncurrentVersionDays:
+    Type: Number
+    Default: 30
+    Description: Delete old model versions after this many days.
+  KeepImages:
+    Type: Number
+    Default: 20
+    Description: Number of most recent images kept in ECR.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC for the ECS tasks (the default VPC is fine).
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Public subnets of that VPC. Tasks get a public IP, so no NAT gateway is needed.
+
+Conditions:
+  CreateOidc: !Equals [!Ref CreateOidcProvider, "true"]
+
+Resources:
+  # S3: Block Public Access, versioning, SSE-S3, expire old versions after N days.
+  ModelBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub iris-mlops-models-${AWS::AccountId} # account ID keeps it globally unique
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-model-versions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: !Ref NoncurrentVersionDays
+
+  # ECR: scan on push, immutable tags, keep the last N images.
+  ImageRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: iris-api
+      EmptyOnDelete: true # deleting the stack also deletes the images
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep the most recent ${KeepImages} images",
+                "selection": {"tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": ${KeepImages}},
+                "action": {"type": "expire"}
+              }
+            ]
+          }
+
+  # One provider per URL per account; set CreateOidcProvider=false if it already exists.
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateOidc
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+  # CI role: write to S3, push to ECR, deploy to ECS. Trusted only for this repo's main branch.
+  CiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iris-ci
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateOidc
+                - !Ref GitHubOidcProvider
+                - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": sts.amazonaws.com
+                "token.actions.githubusercontent.com:sub": !Sub repo:${GitHubRepo}:ref:refs/heads/main
+      Policies:
+        - PolicyName: iris-ci
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub ${ModelBucket.Arn}/*
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt ModelBucket.Arn
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecr:BatchGetImage
+                  - ecr:DescribeImages # find the last code-only image
+                Resource: !GetAtt ImageRepository.Arn
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeTaskDefinition
+                  - ecs:RegisterTaskDefinition
+                Resource: "*" # these actions don't support resource-level permissions
+              - Effect: Allow
+                Action:
+                  - ecs:UpdateService
+                  - ecs:DescribeServices
+                Resource:
+                  - !Ref ModelInImageService
+                  - !Ref CodeOnlyImageService
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt TaskExecutionRole.Arn
+                  - !GetAtt CodeOnlyTaskRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ecs-tasks.amazonaws.com
+
+  # Serving: read models from S3, pull images from ECR.
+  ReaderPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: iris-reader
+      Description: Read models from S3 and pull images from ECR
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: s3:GetObject
+            Resource: !Sub ${ModelBucket.Arn}/*
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource: !GetAtt ModelBucket.Arn
+          - Effect: Allow
+            Action: ecr:GetAuthorizationToken
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+            Resource: !GetAtt ImageRepository.Arn
+
+  # Read-only user for local runs (iris-reader profile).
+  # No access key here, so no secret lives in the stack; create one in the console or CLI.
+  ReaderUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: iris-reader
+      ManagedPolicyArns:
+        - !Ref ReaderPolicy
+
+  # ECS: one cluster, one Fargate service per approach. Each task gets a public IP (no load balancer).
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: iris-mlops
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/iris-mlops
+      RetentionInDays: 7
+
+  # Lets ECS pull images from ECR and write container logs.
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # Approach B's container reads the model from S3 with this role.
+  CodeOnlyTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref ReaderPolicy
+
+  ApiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public access to the Iris API on port 8000
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+
+  # These first revisions only reserve the task definition families: the image tag is a
+  # placeholder. CD registers new revisions with the real image on every deploy.
+  ModelInImageTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: iris-model-in-image
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: "256"
+      Memory: "512"
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: api
+          Image: !Sub ${ImageRepository.RepositoryUri}:placeholder
+          PortMappings:
+            - ContainerPort: 8000
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - 'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8000/health'', timeout=3)" || exit 1'
+            Interval: 15
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: model-in-image
+
+  CodeOnlyImageTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: iris-code-only-image
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: "256"
+      Memory: "512"
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt CodeOnlyTaskRole.Arn
+      ContainerDefinitions:
+        - Name: api
+          Image: !Sub ${ImageRepository.RepositoryUri}:placeholder
+          PortMappings:
+            - ContainerPort: 8000
+          Environment:
+            - Name: MODEL_URI
+              Value: !Sub s3://${ModelBucket}/iris/latest/model.joblib
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - 'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8000/health'', timeout=3)" || exit 1'
+            Interval: 15
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: code-only-image
+
+  # Services start with no task because no image exists yet; CD scales them to 1 on the first deploy.
+  # A stack update that changes these resources resets them, so run CD again after such an update.
+  ModelInImageService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: iris-model-in-image
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      TaskDefinition: !Ref ModelInImageTaskDefinition
+      DesiredCount: 0
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref ApiSecurityGroup
+
+  CodeOnlyImageService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: iris-code-only-image
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      TaskDefinition: !Ref CodeOnlyImageTaskDefinition
+      DesiredCount: 0
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref ApiSecurityGroup
+
+Outputs:
+  BucketName:
+    Description: Put this in GitHub repo Settings > Secrets and variables > Actions > Variables as MODEL_BUCKET
+    Value: !Ref ModelBucket
+  ImageRepositoryUri:
+    Value: !GetAtt ImageRepository.RepositoryUri
+  CiRoleArn:
+    Description: Put this in GitHub repo Settings > Secrets and variables > Actions > Variables as AWS_ROLE_ARN
+    Value: !GetAtt CiRole.Arn
+  ClusterName:
+    Value: !Ref Cluster
+  ReaderUserName:
+    Description: Create an access key for this user and store it as the iris-reader profile in ~/.aws
+    Value: !Ref ReaderUser

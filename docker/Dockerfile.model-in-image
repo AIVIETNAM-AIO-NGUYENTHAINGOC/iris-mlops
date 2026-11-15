@@ -1,0 +1,16 @@
+# Approach A: model baked into the image. Run src/model/train.py first.
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src/api/ src/api/
+COPY artifacts/model.joblib artifacts/model.joblib
+
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA \
+    MODEL_SOURCE=local
+
+EXPOSE 8000
+CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

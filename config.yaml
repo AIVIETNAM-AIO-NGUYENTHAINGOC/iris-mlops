@@ -1,0 +1,11 @@
+# Training params and quality gate threshold. Change them here, not in code.
+data:
+  test_size: 0.2
+  random_state: 42
+
+model:
+  C: 1.0
+  max_iter: 200
+
+gate:
+  min_accuracy: 0.9

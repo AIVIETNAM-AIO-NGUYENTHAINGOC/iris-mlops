@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Lint
+        run: ruff check .
+      - name: Pytest (data)
+        run: pytest tests/test_data.py
+      - name: Train Model
+        run: python src/model/train.py
+      - name: Evaluate Model
+        run: |
+          python src/model/evaluate.py
+          python src/model/gate.py # exit 1 if below threshold
+      - name: Pytest (model, API)
+        run: pytest tests/test_model.py tests/test_api.py
+      # Picked up by the CD workflows via workflow_run.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model
+          path: artifacts/

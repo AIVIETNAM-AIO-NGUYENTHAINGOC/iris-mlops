@@ -1,0 +1,16 @@
+# Approach B: code-only image; the model is downloaded from MODEL_URI (s3://...) at startup.
+# Never COPY credentials into the image; S3 read access is passed in at runtime.
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src/api/ src/api/
+
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA \
+    MODEL_SOURCE=s3
+
+EXPOSE 8000
+CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,61 @@
+# Run both approaches locally. S3 is emulated by Moto, so no AWS account is needed.
+#   1. docker compose run --rm train    -> artifacts/model.joblib
+#   2. docker compose up --build        -> A: http://localhost:8000, B: http://localhost:8001
+services:
+  # One-off: train, evaluate and gate the model into ./artifacts.
+  train:
+    profiles: ["train"]
+    image: python:3.11-slim
+    working_dir: /repo
+    volumes:
+      - .:/repo
+      - pip-cache:/root/.cache/pip
+    command: >
+      sh -c "pip install -q -r requirements.txt
+      && python src/model/train.py
+      && python src/model/evaluate.py
+      && python src/model/gate.py"
+
+  # Approach A: the model is baked into the image.
+  api-model-in-image:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.model-in-image
+    ports:
+      - "8000:8000"
+
+  # Local S3 (in memory, empty on every start).
+  s3:
+    image: motoserver/moto:5.2.4
+
+  # One-off: create the bucket and upload artifacts/model.joblib.
+  s3-init:
+    image: amazon/aws-cli:2.39.1
+    entrypoint: ["bash", "/s3-init.sh"]
+    environment: &local-aws
+      AWS_ENDPOINT_URL: http://s3:5000 # send S3 calls to Moto instead of AWS
+      AWS_ACCESS_KEY_ID: test # Moto accepts any credentials
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - ./artifacts:/artifacts:ro
+      - ./docker/s3-init.sh:/s3-init.sh:ro
+    depends_on:
+      - s3
+
+  # Approach B: code-only image, loads the model from local S3 at startup.
+  api-code-only-image:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.code-only-image
+    ports:
+      - "8001:8000"
+    environment:
+      <<: *local-aws
+      MODEL_URI: s3://iris-models/iris/latest/model.joblib
+    depends_on:
+      s3-init:
+        condition: service_completed_successfully
+
+volumes:
+  pip-cache:

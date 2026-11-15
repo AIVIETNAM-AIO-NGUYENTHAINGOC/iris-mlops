@@ -1,0 +1,112 @@
+name: "CD: model in image"
+
+# Approach A: bake the model from the CI run into the image, test it, push it to ECR, deploy it to ECS.
+# Skipped when neither API nor model code changed since the last image.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read # download the model artifact from the CI run
+  id-token: write # OIDC to AWS
+
+concurrency:
+  group: cd-model-in-image
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-1
+  ECR_REPOSITORY: iris-api
+  CLUSTER: iris-mlops
+  SERVICE: iris-model-in-image
+  SHA: ${{ github.event.workflow_run.head_sha }} # the commit CI tested
+
+jobs:
+  changes:
+    # Only after a successful CI run on a push to main, never for PRs.
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.diff.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0 # full history to diff against the last built commit
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: diff
+        name: Did API or model code change since the last image?
+        run: |
+          LAST=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+            --query "sort_by(imageDetails[?imageTags[?ends_with(@, '-bake')]], &imagePushedAt)[-1].imageTags[?ends_with(@, '-bake')] | [0]" \
+            --output text)
+          # Build when there is no image yet or the diff can't be computed.
+          if [ "$LAST" = "None" ] || ! git diff --quiet "${LAST%-bake}" "$SHA" -- \
+              src/api src/model config.yaml requirements.txt docker/Dockerfile.model-in-image; then
+            echo "image=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-image:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: model
+          path: artifacts/
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build Docker image with model
+        run: |
+          IMAGE=${{ steps.ecr.outputs.registry }}/$ECR_REPOSITORY:$SHA-bake
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build -f docker/Dockerfile.model-in-image --build-arg GIT_SHA="$SHA" -t "$IMAGE" .
+      - name: Smoke test
+        run: |
+          docker run -d --name api -p 8000:8000 "$IMAGE"
+          for _ in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 1; done
+          curl -sf -X POST localhost:8000/predict -H 'Content-Type: application/json' \
+            -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
+      - if: failure()
+        run: docker logs api
+      - name: Push image
+        run: docker push "$IMAGE"
+
+  deploy:
+    needs: build-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy to ECS
+        env:
+          TAG: ${{ env.SHA }}-bake
+        run: |
+          aws ecs describe-task-definition --task-definition "$SERVICE" --query taskDefinition > td.json
+          # Point the container at the new tag and drop read-only fields before re-registering.
+          jq --arg tag "$TAG" '.containerDefinitions[0].image |= sub(":[^:]+$"; ":" + $tag)
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            td.json > new-td.json
+          TD=$(aws ecs register-task-definition --cli-input-json file://new-td.json \
+            --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+            --task-definition "$TD" --desired-count 1 > /dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
