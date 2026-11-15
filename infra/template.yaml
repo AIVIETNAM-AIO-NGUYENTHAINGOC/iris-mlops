@@ -182,15 +182,6 @@ Resources:
               - ecr:BatchGetImage
             Resource: !GetAtt ImageRepository.Arn
 
-  # Read-only user for local runs (iris-reader profile).
-  # No access key here, so no secret lives in the stack; create one in the console or CLI.
-  ReaderUser:
-    Type: AWS::IAM::User
-    Properties:
-      UserName: iris-reader
-      ManagedPolicyArns:
-        - !Ref ReaderPolicy
-
   # ECS: one cluster, one Fargate service per approach. Each task gets a public IP (no load balancer).
   Cluster:
     Type: AWS::ECS::Cluster
@@ -357,6 +348,3 @@ Outputs:
     Value: !GetAtt CiRole.Arn
   ClusterName:
     Value: !Ref Cluster
-  ReaderUserName:
-    Description: Create an access key for this user and store it as the iris-reader profile in ~/.aws
-    Value: !Ref ReaderUser

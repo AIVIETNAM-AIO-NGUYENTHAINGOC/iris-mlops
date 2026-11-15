@@ -136,7 +136,7 @@ This creates:
 
 - the model bucket `iris-mlops-models-<account-id>` and the ECR repository `iris-api`
 - the ECS cluster `iris-mlops` with two services, `iris-model-in-image` (A) and `iris-code-only-image` (B). They start with no running task; the first CD run deploys an image and starts one task each.
-- the GitHub OIDC provider, the CI role `iris-ci` (trusted only for `main` of your repository) and a read-only user `iris-reader`
+- the GitHub OIDC provider and the CI role `iris-ci` (trusted only for `main` of your repository)
 
 If your account already has a GitHub OIDC provider, add `CreateOidcProvider=false` to `--parameter-overrides`.
 
@@ -190,10 +190,9 @@ aws ecs update-service --cluster iris-mlops --service iris-model-in-image --desi
 
 ## Clean up: delete everything
 
-`aws cloudformation delete-stack` alone is not enough, for three reasons:
+`aws cloudformation delete-stack` alone is not enough, for two reasons:
 
 - CloudFormation won't delete an S3 bucket that still has objects. ECR has an `EmptyOnDelete` option (used in the template), S3 has none.
-- It can't delete the `iris-reader` user if access keys were created for it outside the stack.
 - The task definition revisions CD registered are not part of the stack.
 
 So run these in order:
@@ -207,18 +206,12 @@ BUCKET=iris-mlops-models-$(aws sts get-caller-identity --query Account --output 
 aws s3api delete-objects --bucket "$BUCKET" --delete "$(aws s3api list-object-versions --bucket "$BUCKET" \
   --query '{Objects: [Versions, DeleteMarkers][].{Key: Key, VersionId: VersionId}}' --output json)"
 
-# 2. Delete the access keys of iris-reader, if you created any.
-for KEY in $(aws iam list-access-keys --user-name iris-reader \
-    --query 'AccessKeyMetadata[].AccessKeyId' --output text); do
-  aws iam delete-access-key --user-name iris-reader --access-key-id "$KEY"
-done
-
-# 3. Delete the stack: ECS cluster and services, ECR repository and its images,
-#    bucket, IAM roles and user, OIDC provider, security group, log group.
+# 2. Delete the stack: ECS cluster and services, ECR repository and its images,
+#    bucket, IAM roles and policy, OIDC provider, security group, log group.
 aws cloudformation delete-stack --stack-name iris-mlops
 aws cloudformation wait stack-delete-complete --stack-name iris-mlops
 
-# 4. Deregister the task definition revisions CD registered (free, but left behind).
+# 3. Deregister the task definition revisions CD registered (free, but left behind).
 for FAMILY in iris-model-in-image iris-code-only-image; do
   for TD in $(aws ecs list-task-definitions --family-prefix "$FAMILY" \
       --query 'taskDefinitionArns[]' --output text); do
@@ -227,7 +220,7 @@ for FAMILY in iris-model-in-image iris-code-only-image; do
 done
 ```
 
-If step 3 fails, see which resource blocked it:
+If step 2 fails, see which resource blocked it:
 
 ```bash
 aws cloudformation describe-stack-events --stack-name iris-mlops \
