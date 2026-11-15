@@ -71,10 +71,10 @@ Changes to tests or docs only ship nothing.
 
 Both approaches run in Docker. [Moto](https://github.com/getmoto/moto) stands in for S3, so no AWS account is needed yet.
 
-1. Train, evaluate and gate the model. This writes `artifacts/model.joblib`, which both approaches need:
+1. Run the same checks as CI (lint, tests, train, evaluate, gate). This writes `artifacts/model.joblib`, which both approaches need:
 
    ```bash
-   docker compose run --rm train
+   docker compose run --rm ci
    ```
 
 2. Start both APIs. `s3-init` (`docker/s3-init.sh`) creates a bucket in the local S3 and uploads the model, then the Approach B container loads it from there:
@@ -91,17 +91,6 @@ Both approaches run in Docker. [Moto](https://github.com/getmoto/moto) stands in
    curl -X POST localhost:8001/predict -H 'Content-Type: application/json' \
      -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
    ```
-
-To run the lint and tests the same way CI does:
-
-```bash
-python3.11 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-ruff check .
-pytest tests/test_data.py
-python src/model/train.py && python src/model/evaluate.py && python src/model/gate.py
-pytest tests/test_model.py tests/test_api.py
-```
 
 ### 2. Create the AWS resources
 
@@ -201,15 +190,22 @@ aws ecs update-service --cluster iris-mlops --service iris-model-in-image --desi
 
 ## Clean up: delete everything
 
-Run these in order when you are done testing. The stack can't be deleted while the bucket still has objects or `iris-reader` still has access keys, so steps 1 and 2 come first.
+`aws cloudformation delete-stack` alone is not enough, for three reasons:
+
+- CloudFormation won't delete an S3 bucket that still has objects. ECR has an `EmptyOnDelete` option (used in the template), S3 has none.
+- It can't delete the `iris-reader` user if access keys were created for it outside the stack.
+- The task definition revisions CD registered are not part of the stack.
+
+So run these in order:
 
 ```bash
 export AWS_REGION=ap-southeast-1
-ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+BUCKET=iris-mlops-models-$(aws sts get-caller-identity --query Account --output text)
 
-# 1. Empty the model bucket, old versions included (uses boto3 from requirements.txt).
-python -c "import boto3, sys; boto3.resource('s3').Bucket(sys.argv[1]).object_versions.delete()" \
-  "iris-mlops-models-$ACCOUNT"
+# 1. Empty the model bucket. It is versioned, so delete every object version and
+#    delete marker (one call handles up to 1000, far more than this project creates).
+aws s3api delete-objects --bucket "$BUCKET" --delete "$(aws s3api list-object-versions --bucket "$BUCKET" \
+  --query '{Objects: [Versions, DeleteMarkers][].{Key: Key, VersionId: VersionId}}' --output json)"
 
 # 2. Delete the access keys of iris-reader, if you created any.
 for KEY in $(aws iam list-access-keys --user-name iris-reader \

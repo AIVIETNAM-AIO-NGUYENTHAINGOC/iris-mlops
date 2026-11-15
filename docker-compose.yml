@@ -1,10 +1,10 @@
 # Run both approaches locally. S3 is emulated by Moto, so no AWS account is needed.
-#   1. docker compose run --rm train    -> artifacts/model.joblib
+#   1. docker compose run --rm ci       -> same checks as CI, writes artifacts/model.joblib
 #   2. docker compose up --build        -> A: http://localhost:8000, B: http://localhost:8001
 services:
-  # One-off: train, evaluate and gate the model into ./artifacts.
-  train:
-    profiles: ["train"]
+  # One-off: lint, tests, train, evaluate and gate, same as CI. Writes ./artifacts.
+  ci:
+    profiles: ["ci"]
     image: python:3.11-slim
     working_dir: /repo
     volumes:
@@ -12,9 +12,12 @@ services:
       - pip-cache:/root/.cache/pip
     command: >
       sh -c "pip install -q -r requirements.txt
+      && ruff check .
+      && pytest -q tests/test_data.py
       && python src/model/train.py
       && python src/model/evaluate.py
-      && python src/model/gate.py"
+      && python src/model/gate.py
+      && pytest -q tests/test_model.py tests/test_api.py"
 
   # Approach A: the model is baked into the image.
   api-model-in-image:
