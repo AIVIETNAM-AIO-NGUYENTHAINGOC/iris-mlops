@@ -271,6 +271,6 @@ aws cloudformation describe-stack-events --stack-name iris-mlops \
 Outside AWS:
 
 1. Delete the GitHub variable (`gh variable delete AWS_ROLE_ARN`). Without the stack, CD fails on the next push to `main`, so also disable the CD workflows (`gh workflow disable "CD: model in image"` and `gh workflow disable "CD: code-only image + model in S3"`) or delete the repository.
-2. Remove the local containers, images and pip cache: `docker compose down --rmi local --volumes`.
+2. Remove the local containers, the images built for this project and the pip cache: `docker compose --profile ci down --rmi local --volumes`. Without `--profile ci` the pip cache volume stays, because only the `ci` service uses it. The pulled images (`python`, `motoserver/moto`, `amazon/aws-cli`) are kept, since other projects may share them.
 
 The stack deletes the GitHub OIDC provider it created. If other projects in the account started using that provider, they lose access too.
