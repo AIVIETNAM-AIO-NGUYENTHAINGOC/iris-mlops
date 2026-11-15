@@ -123,6 +123,8 @@ Both approaches run in Docker. [Moto](https://github.com/getmoto/moto) stands in
    ```bash
    curl localhost:8000/health   # Approach A: "model_source": "local"
    curl localhost:8001/health   # Approach B: "model_source": "s3"
+   curl -X POST localhost:8000/predict -H 'Content-Type: application/json' \
+     -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
    curl -X POST localhost:8001/predict -H 'Content-Type: application/json' \
      -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
    ```
