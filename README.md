@@ -65,7 +65,42 @@ Changes to tests or docs only ship nothing.
 
 ## Setup
 
-**Prerequisites:** Docker, GitHub CLI (`gh`, signed in), Python 3.11 (only to run the tests outside Docker), AWS CLI v2 recent enough to have `aws login`, an IAM user (not root) that can sign in to the console and create IAM, S3, ECR, ECS and EC2 security group resources, and a GitHub repository for this code (public repositories get free Actions minutes).
+**Prerequisites:** an AWS account with an IAM user (not root) that can sign in to the console and create IAM, S3, ECR, ECS and EC2 security group resources, and a GitHub repository for this code (public repositories get free Actions minutes).
+
+### 0. Install the tools
+
+| Tool | Used for |
+|---|---|
+| Docker | Running both approaches locally |
+| AWS CLI v2, with the `aws login` command | Creating, calling and deleting the AWS resources |
+| GitHub CLI (`gh`) | Reading the OIDC subject and setting the repository variable |
+| Git | Pushing to GitHub |
+
+macOS, with Homebrew:
+
+```bash
+brew install awscli gh git
+brew install --cask docker-desktop   # then open Docker Desktop once to start the engine
+```
+
+Linux: install the AWS CLI with the official installer, then follow the official guides for [Docker Engine](https://docs.docker.com/engine/install/) and the [GitHub CLI](https://github.com/cli/cli/blob/trunk/docs/install_linux.md):
+
+```bash
+curl -s "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o awscliv2.zip
+unzip -q awscliv2.zip && sudo ./aws/install   # add --update to upgrade an existing install
+```
+
+Windows: the commands in this README are bash, so use WSL 2 and follow the Linux steps inside it. Docker Desktop for Windows works with WSL 2.
+
+Check the tools and sign in to GitHub:
+
+```bash
+docker --version
+aws --version
+aws login help > /dev/null && echo "aws login: available"   # if not, upgrade the AWS CLI
+gh --version
+gh auth login
+```
 
 ### 1. Run locally
 
