@@ -65,7 +65,7 @@ Changes to tests or docs only ship nothing.
 
 ## Setup
 
-**Prerequisites:** Docker, Python 3.11 (only to run the tests outside Docker), AWS CLI v2 with a non-root profile that can create IAM, S3, ECR, ECS and EC2 security group resources, and a GitHub repository for this code (public repositories get free Actions minutes).
+**Prerequisites:** Docker, Python 3.11 (only to run the tests outside Docker), AWS CLI v2 recent enough to have `aws login`, an IAM user (not root) that can sign in to the console and create IAM, S3, ECR, ECS and EC2 security group resources, and a GitHub repository for this code (public repositories get free Actions minutes).
 
 ### 1. Run locally
 
@@ -104,6 +104,15 @@ pytest tests/test_model.py tests/test_api.py
 ```
 
 ### 2. Create the AWS resources
+
+Sign in first. `aws login` opens the browser for a console sign-in and gives the CLI temporary credentials that it refreshes on its own:
+
+```bash
+aws login --region ap-southeast-1
+aws sts get-caller-identity   # check the account and user you are signed in as
+```
+
+Then create the stack:
 
 ```bash
 export AWS_REGION=ap-southeast-1
