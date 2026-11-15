@@ -65,7 +65,7 @@ Changes to tests or docs only ship nothing.
 
 ## Setup
 
-**Prerequisites:** Docker, Python 3.11 (only to run the tests outside Docker), AWS CLI v2 recent enough to have `aws login`, an IAM user (not root) that can sign in to the console and create IAM, S3, ECR, ECS and EC2 security group resources, and a GitHub repository for this code (public repositories get free Actions minutes).
+**Prerequisites:** Docker, GitHub CLI (`gh`, signed in), Python 3.11 (only to run the tests outside Docker), AWS CLI v2 recent enough to have `aws login`, an IAM user (not root) that can sign in to the console and create IAM, S3, ECR, ECS and EC2 security group resources, and a GitHub repository for this code (public repositories get free Actions minutes).
 
 ### 1. Run locally
 
@@ -112,6 +112,13 @@ aws login --region ap-southeast-1
 aws sts get-caller-identity   # check the account and user you are signed in as
 ```
 
+If your `default` profile already belongs to another account, sign in to a separate profile instead, and use it for every command below:
+
+```bash
+aws login --profile iris --region ap-southeast-1
+export AWS_PROFILE=iris
+```
+
 Then create the stack:
 
 ```bash
@@ -122,11 +129,15 @@ VPC_ID=$(aws ec2 describe-vpcs --filters Name=is-default,Values=true --query 'Vp
 SUBNET_IDS=$(aws ec2 describe-subnets --filters Name=vpc-id,Values="$VPC_ID" \
   --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
 
+# The OIDC subject GitHub sends for this repository. New repositories include
+# owner and repository IDs in it (repo:owner@123/name@456), so read it from GitHub.
+SUB_PREFIX=$(gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix)
+
 aws cloudformation deploy \
   --stack-name iris-mlops \
   --template-file infra/template.yaml \
   --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides GitHubRepo=<owner>/<repo> VpcId="$VPC_ID" SubnetIds="$SUBNET_IDS"
+  --parameter-overrides GitHubSubjectPrefix="$SUB_PREFIX" VpcId="$VPC_ID" SubnetIds="$SUBNET_IDS"
 
 aws cloudformation describe-stacks --stack-name iris-mlops \
   --query 'Stacks[0].Outputs' --output table

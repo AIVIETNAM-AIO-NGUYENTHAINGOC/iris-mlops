@@ -4,9 +4,12 @@ Description: Iris MLOps - S3 bucket for models, ECR repository for images, ECS F
 # Deploy and teardown: see README.md.
 
 Parameters:
-  GitHubRepo:
+  GitHubSubjectPrefix:
     Type: String
-    Description: GitHub repository as owner/name. Only its main branch may assume the CI role.
+    Description: >-
+      OIDC subject prefix of the GitHub repository, e.g. repo:owner@123/name@456.
+      Get it with: gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix
+      Only the main branch of that repository may assume the CI role.
   CreateOidcProvider:
     Type: String
     AllowedValues: ["true", "false"]
@@ -106,7 +109,7 @@ Resources:
             Condition:
               StringEquals:
                 "token.actions.githubusercontent.com:aud": sts.amazonaws.com
-                "token.actions.githubusercontent.com:sub": !Sub repo:${GitHubRepo}:ref:refs/heads/main
+                "token.actions.githubusercontent.com:sub": !Sub ${GitHubSubjectPrefix}:ref:refs/heads/main
       Policies:
         - PolicyName: iris-ci
           PolicyDocument:
