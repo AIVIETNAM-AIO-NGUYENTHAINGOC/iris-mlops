@@ -212,7 +212,10 @@ task_ip() {
 A=$(task_ip iris-model-in-image)
 B=$(task_ip iris-code-only-image)
 
-curl "http://$A:8000/health"
+curl "http://$A:8000/health"   # Approach A: "model_source": "local"
+curl "http://$B:8000/health"   # Approach B: "model_source": "s3"
+curl -X POST "http://$A:8000/predict" -H 'Content-Type: application/json' \
+  -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
 curl -X POST "http://$B:8000/predict" -H 'Content-Type: application/json' \
   -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
 ```
