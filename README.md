@@ -247,7 +247,7 @@ aws s3api delete-objects --bucket "$BUCKET" --delete "$(aws s3api list-object-ve
   --query '{Objects: [Versions, DeleteMarkers][].{Key: Key, VersionId: VersionId}}' --output json)"
 
 # 2. Delete the stack: ECS cluster and services, ECR repository and its images,
-#    bucket, IAM roles and policy, OIDC provider, security group, log group.
+#    bucket, IAM roles and policy, OIDC provider, security group.
 aws cloudformation delete-stack --stack-name iris-mlops
 aws cloudformation wait stack-delete-complete --stack-name iris-mlops
 

@@ -188,13 +188,7 @@ Resources:
     Properties:
       ClusterName: iris-mlops
 
-  LogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: /ecs/iris-mlops
-      RetentionInDays: 7
-
-  # Lets ECS pull images from ECR and write container logs.
+  # Lets ECS pull images from ECR.
   TaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -257,12 +251,6 @@ Resources:
             Timeout: 5
             Retries: 3
             StartPeriod: 30
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref LogGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: model-in-image
 
   CodeOnlyImageTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -290,12 +278,6 @@ Resources:
             Timeout: 5
             Retries: 3
             StartPeriod: 30
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref LogGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: code-only-image
 
   # Services start with no task because no image exists yet; CD scales them to 1 on the first deploy.
   # A stack update that changes these resources resets them, so run CD again after such an update.
