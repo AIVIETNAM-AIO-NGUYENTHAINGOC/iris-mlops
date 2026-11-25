@@ -7,6 +7,8 @@ import yaml
 from sklearn.datasets import load_iris
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 ARTIFACTS = Path("artifacts")
 
@@ -28,11 +30,17 @@ def split_data(cfg: dict):
     )
 
 
-def main() -> None:
-    cfg = load_config()
+def train(cfg: dict) -> Pipeline:
     X_train, _, y_train, _ = split_data(cfg)
-    model = LogisticRegression(**cfg["model"], random_state=cfg["data"]["random_state"])
-    model.fit(X_train, y_train)
+    model = Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", LogisticRegression(**cfg["model"], random_state=cfg["data"]["random_state"])),
+    ])
+    return model.fit(X_train, y_train)
+
+
+def main() -> None:
+    model = train(load_config())
     ARTIFACTS.mkdir(exist_ok=True)
     joblib.dump(model, ARTIFACTS / "model.joblib")
     print(f"Saved {ARTIFACTS / 'model.joblib'}")
