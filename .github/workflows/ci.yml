@@ -26,6 +26,8 @@ jobs:
         run: ruff check .
       - name: Pytest (data)
         run: pytest tests/test_data.py
+      - name: Pytest (features)
+        run: pytest tests/test_features.py
       - name: Train Model
         run: python src/model/train.py
       - name: Evaluate Model
