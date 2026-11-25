@@ -1,6 +1,7 @@
-"""Model predicts fixed samples correctly. Run src/model/train.py first."""
+"""Model behavior: fixed samples, invariance to small noise. Run src/model/train.py first."""
 
 import joblib
+import numpy as np
 import pytest
 
 SAMPLES = [
@@ -18,3 +19,10 @@ def model():
 @pytest.mark.parametrize("features, expected", SAMPLES)
 def test_predicts_fixed_samples(model, features, expected):
     assert model.predict([features])[0] == expected
+
+
+@pytest.mark.parametrize("features, expected", SAMPLES)
+def test_invariant_to_small_noise(model, features, expected):
+    rng = np.random.default_rng(0)
+    noisy = np.array(features) + rng.uniform(-0.05, 0.05, size=(100, 4))  # ±0.05 cm
+    assert (model.predict(noisy) == expected).all()
