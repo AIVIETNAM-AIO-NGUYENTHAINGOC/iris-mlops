@@ -28,7 +28,9 @@ env:
 jobs:
   changes:
     # Only after a successful CI run on a push to main, never for PRs.
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     outputs:
       model: ${{ steps.diff.outputs.model }}
@@ -55,8 +57,9 @@ jobs:
 
           LAST_MODEL=$(aws s3api head-object --bucket "$BUCKET" --key iris/latest/model.joblib \
             --query 'Metadata."git-sha"' --output text 2>/dev/null || echo None)
+          TAGS="imageTags[?ends_with(@, '-s3')]"
           LAST_IMAGE=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
-            --query "sort_by(imageDetails[?imageTags[?ends_with(@, '-s3')]], &imagePushedAt)[-1].imageTags[?ends_with(@, '-s3')] | [0]" \
+            --query "sort_by(imageDetails[?$TAGS], &imagePushedAt)[-1].$TAGS | [0]" \
             --output text)
 
           if changed "$LAST_MODEL" src/model config.yaml requirements.txt; then
@@ -95,7 +98,9 @@ jobs:
   build-image:
     # Waits for upload-model when it runs, so the smoke test loads the newest model.
     needs: [changes, upload-model]
-    if: ${{ !cancelled() && needs.changes.outputs.image == 'true' && needs.upload-model.result != 'failure' }}
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.image == 'true' &&
+      needs.upload-model.result != 'failure' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -135,7 +140,9 @@ jobs:
 
   deploy:
     needs: [upload-model, build-image]
-    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.upload-model.result == 'success' || needs.build-image.result == 'success') }}
+    if: >-
+      ${{ !cancelled() && !contains(needs.*.result, 'failure') &&
+      (needs.upload-model.result == 'success' || needs.build-image.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - uses: aws-actions/configure-aws-credentials@v4

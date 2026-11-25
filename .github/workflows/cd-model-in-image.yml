@@ -27,7 +27,9 @@ env:
 jobs:
   changes:
     # Only after a successful CI run on a push to main, never for PRs.
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.diff.outputs.image }}
@@ -43,12 +45,14 @@ jobs:
       - id: diff
         name: Did API or model code change since the last image?
         run: |
+          TAGS="imageTags[?ends_with(@, '-bake')]"
           LAST=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
-            --query "sort_by(imageDetails[?imageTags[?ends_with(@, '-bake')]], &imagePushedAt)[-1].imageTags[?ends_with(@, '-bake')] | [0]" \
+            --query "sort_by(imageDetails[?$TAGS], &imagePushedAt)[-1].$TAGS | [0]" \
             --output text)
           # Build when there is no image yet or the diff can't be computed.
           if [ "$LAST" = "None" ] || ! git diff --quiet "${LAST%-bake}" "$SHA" -- \
-              src/api src/model config.yaml requirements.txt docker/Dockerfile.model-in-image; then
+              src/api src/model config.yaml requirements.txt \
+              docker/Dockerfile.model-in-image; then
             echo "image=true" >> "$GITHUB_OUTPUT"
           fi
 
