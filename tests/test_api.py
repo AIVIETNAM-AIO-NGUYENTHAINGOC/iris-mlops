@@ -26,4 +26,5 @@ def test_predict(client):
 
 
 def test_predict_rejects_invalid_input(client):
-    assert client.post("/predict", json={**SETOSA, "petal_width": -1}).status_code == 422
+    res = client.post("/predict", json={**SETOSA, "petal_width": -1})
+    assert res.status_code == 422

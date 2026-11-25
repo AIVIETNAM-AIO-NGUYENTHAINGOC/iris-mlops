@@ -2,7 +2,12 @@
 
 from sklearn.datasets import load_iris
 
-FEATURES = ["sepal length (cm)", "sepal width (cm)", "petal length (cm)", "petal width (cm)"]
+FEATURES = [
+    "sepal length (cm)",
+    "sepal width (cm)",
+    "petal length (cm)",
+    "petal width (cm)",
+]
 
 df = load_iris(as_frame=True).frame
 
